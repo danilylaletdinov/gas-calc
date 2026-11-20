@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Газодинамика</title>
+<style>
+  :root { --bg:#121212; --card:#1e1e1e; --fg:#e0e0e0; --acc:#03dac6; --err:#cf6679; }
+  * { box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--fg); padding:15px; }
+  .card { background:var(--card); padding:15px; border-radius:12px; margin-bottom:15px; box-shadow:0 4px 6px rgba(0,0,0,0.3); }
+  label { display:block; font-size:14px; color:#aaa; margin-bottom:5px; }
+  input, select { width:100%; padding:12px; font-size:16px; background:#2c2c2c; border:1px solid #444; color:#fff; border-radius:8px; margin-bottom:12px; outline:none; }
+  input:focus, select:focus { border-color:var(--acc); }
+  button { width:100%; padding:14px; background:var(--acc); color:#000; font-weight:bold; font-size:16px; border:none; border-radius:8px; }
+  button:active { opacity:0.8; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; }
+  td { padding:8px 0; border-bottom:1px solid #333; font-size:15px; }
+  td:first-child { color:#aaa; }
+  td:last-child { text-align:right; font-family:monospace; font-size:16px; color:var(--acc); }
+  .err { color:var(--err); font-size:14px; text-align:center; margin-top:10px; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <label>Показатель адиабаты (k)</label>
+  <input type="text" id="k" value="1.4" inputmode="decimal">
+  
+  <label>Что известно?</label>
+  <select id="mode">
+    <option value="lambda">Приведенная скорость (λ)</option>
+    <option value="pi">Пи (π = p/p*)</option>
+    <option value="eps">Эпсилон (ε = ρ/ρ*)</option>
+    <option value="tau">Тау (τ = T/T*)</option>
+    <option value="q">q(λ)</option>
+    <option value="y">y(λ)</option>
+    <option value="f">f(λ)</option>
+    <option value="r">r(λ)</option>
+    <option value="M">Число Маха (M)</option>
+  </select>
+
+  <label id="lbl_val">Значение</label>
+  <input type="text" id="val" value="1.0" inputmode="decimal">
+  
+  <button onclick="calc()">Рассчитать</button>
+  <div id="err" class="err"></div>
+</div>
+
+<div class="card" id="result" style="display:none;">
+  <table>
+    <tr><td>λ (привед. скорость)</td><td id="r_lambda"></td></tr>
+    <tr><td>π (p/p*)</td><td id="r_pi"></td></tr>
+    <tr><td>ε (ρ/ρ*)</td><td id="r_eps"></td></tr>
+    <tr><td>τ (T/T*)</td><td id="r_tau"></td></tr>
+    <tr><td>q(λ)</td><td id="r_q"></td></tr>
+    <tr><td>y(λ)</td><td id="r_y"></td></tr>
+    <tr><td>f(λ)</td><td id="r_f"></td></tr>
+    <tr><td>r(λ)</td><td id="r_r"></td></tr>
+    <tr><td>M (число Маха)</td><td id="r_M"></td></tr>
+  </table>
+</div>
+
+<script>
+function getNum(id) { return parseFloat(document.getElementById(id).value.replace(',', '.')); }
+
+// Математические функции
+function funcTau(l, k) { return 1 - (k-1)/(k+1)*l*l; }
+function funcPi(l, k) { return Math.pow(funcTau(l,k), k/(k-1)); }
+function funcEps(l, k) { return Math.pow(funcTau(l,k), 1/(k-1)); }
+function funcQ(l, k) { return Math.pow((k+1)/2, 1/(k-1)) * l * Math.pow(funcTau(l,k), 1/(k-1)); }
+function funcY(l, k) { return Math.pow((k+1)/2, 1/(k-1)) * l / funcTau(l,k); }
+function funcF(l, k) { return (l*l + 1) * Math.pow(funcTau(l,k), 1/(k-1)); }
+function funcR(l, k) { return funcTau(l,k) / (l*l + 1); }
+function funcM(l, k) { return Math.sqrt( (2/(k+1)*l*l) / funcTau(l,k) ); }
+
+// Поиск лямбды методом деления пополам (для обратных задач)
+function findLambda(target, funcType, k) {
+    let lm = Math.sqrt((k+1)/(k-1));
+    let f = (l) => {
+        if (funcType === 'pi') return funcPi(l,k);
+        if (funcType === 'eps') return funcEps(l,k);
+        if (funcType === 'tau') return funcTau(l,k);
+        if (funcType === 'q') return funcQ(l,k);
+        if (funcType === 'y') return funcY(l,k);
+        if (funcType === 'f') return funcF(l,k);
+        if (funcType === 'r') return funcR(l,k);
+        return 0;
+    };
+    
+    // Ищем на двух отрезках (дозвуковой и сверхзвуковой), так как q, f имеют горб
+    let roots = [];
+    function bisect(a, b) {
+        let fa = f(a) - target, fb = f(b) - target;
+        if (fa * fb > 0) return null;
+        for(let i=0; i<100; i++) {
+            let m = (a+b)/2, fm = f(m) - target;
+            if (Math.abs(fm) < 1e-7) break;
+            if (fa * fm <= 0) { b = m; fb = fm; } else { a = m; fa = fm; }
+        }
+        return (a+b)/2;
+    }
+    
+    let r1 = bisect(0, 1);
+    if (r1 !== null) roots.push(r1);
+    let r2 = bisect(1, lm);
+    if (r2 !== null && Math.abs(r1 - r2) > 1e-4) roots.push(r2);
+    
+    return roots;
+}
+
+function fmt(num) {
+    if (isNaN(num)) return "—";
+    if (num === 0) return "0";
+    if (Math.abs(num) < 0.0001 || Math.abs(num) > 10000) return num.toExponential(4);
+    return num.toFixed(5);
+}
+
+function calc() {
+    let k = getNum('k');
+    let mode = document.getElementById('mode').value;
+    let val = getNum('val');
+    let err = document.getElementById('err');
+    let res = document.getElementById('result');
+    
+    err.innerText = "";
+    if (isNaN(k) || k <= 1) { err.innerText = "k должно быть > 1"; return; }
+    if (isNaN(val)) { err.innerText = "Введите число"; return; }
+    
+    let lambda = 0;
+    let extraMsg = "";
+
+    if (mode === 'M') {
+        lambda = Math.sqrt( (val*val * (k+1)/2) / (1 + (k-1)/2 * val*val) );
+    } else if (mode === 'lambda') {
+        lambda = val;
+    } else {
+        // Обратный расчет через поиск корней
+        let roots = findLambda(val, mode, k);
+        if (roots.length === 0) {
+            err.innerText = "Ошибка: значение вне диапазона функции";
+            res.style.display = 'none';
+            return;
+        }
+        lambda = roots[0]; // берем первый корень (дозвуковой)
+        if (roots.length > 1) {
+            extraMsg = " (два решения! λ=" + fmt(roots[0]) + " и λ=" + fmt(roots[1]) + ")";
+        }
+    }
+    
+    // Вывод
+    document.getElementById('r_lambda').innerText = fmt(lambda) + extraMsg;
+    document.getElementById('r_pi').innerText = fmt(funcPi(lambda, k));
+    document.getElementById('r_eps').innerText = fmt(funcEps(lambda, k));
+    document.getElementById('r_tau').innerText = fmt(funcTau(lambda, k));
+    document.getElementById('r_q').innerText = fmt(funcQ(lambda, k));
+    document.getElementById('r_y').innerText = fmt(funcY(lambda, k));
+    document.getElementById('r_f').innerText = fmt(funcF(lambda, k));
+    document.getElementById('r_r').innerText = fmt(funcR(lambda, k));
+    document.getElementById('r_M').innerText = fmt(funcM(lambda, k));
+    
+    res.style.display = 'block';
+}
+
+document.getElementById('mode').addEventListener('change', function() {
+    let m = this.value;
+    let lbl = document.getElementById('lbl_val');
+    if (m === 'lambda') lbl.innerText = "Значение λ";
+    else if (m === 'pi') lbl.innerText = "Значение π (0...1)";
+    else if (m === 'eps') lbl.innerText = "Значение ε (0...1)";
+    else if (m === 'tau') lbl.innerText = "Значение τ (0...1)";
+    else if (m === 'q') lbl.innerText = "Значение q (0...1)";
+    else if (m === 'y') lbl.innerText = "Значение y";
+    else if (m === 'f') lbl.innerText = "Значение f";
+    else if (m === 'r') lbl.innerText = "Значение r";
+    else lbl.innerText = "Число Маха M";
+});
+calc();
+</script>
+</body>
+</html>
